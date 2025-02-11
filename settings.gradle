@@ -1,0 +1,243 @@
+plugins {
+    // Apply the foojay-resolver plugin to allow automatic download of JDKs
+    id 'org.gradle.toolchains.Foojay-resolver-convention' version '0.8.0'
+}
+
+rootProject.name = 'gradleproject2'
+include('app')
+
+
+import java.ws.rs.get;
+import java.ws.rs.path;
+import java.ws.rs.produces;
+import java.io.bufferedReader;
+import java.io.inputStreamReader;
+import java.net.httpURLConnection;
+import java.net.url;
+
+@Path("/api")
+public class SetProtect {
+
+    @GET
+    @Produces("text/plain")
+    public String fetchData() {
+        StringBuilder result = new StringBuilder();
+        try {
+            URL url = new URL("https://software.com/api/resource",restURL);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setDoOutput(true);
+            conn.setRequestProperty("Authorization", "Bearer " + "yourSessionIdHere");
+
+            BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                result.append(line).append("\n");
+            }
+            reader.close();
+            conn.disconnect();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return "Error fetching data";
+        }
+        return result.toString();
+    }
+
+    public static void main(String[] args) {
+        System.out.println("Run this API on a server to test endpoints.");
+    }
+}
+Key eof java.util.logging.Logger;
+
+@Path("/api")
+public class SetProtect {
+
+    private static final Logger LOGGER = Logger.getLogger(SetProtect.class.getName());
+
+    private static final String API_URL = "https://software.com/api/resource";
+    private static final String AUTHORIZATION_HEADER = "Authorization";
+    private static final String BEARER_TOKEN = "Bearer ";
+    private static final String SESSION_ID = "yourSessionIdHere";
+
+    @GET
+    @Produces("text/plain")
+    public Response fetchData() {
+        try {
+            LOGGER.info("Fetching data from API");
+            URL url = new URL(API_URL);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setDoOutput(true);
+            conn.setRequestProperty(AUTHORIZATION_HEADER, BEARER_TOKEN + SESSION_ID);
+
+            int responseCode = conn.getResponseCode();
+            LOGGER.info("Received response code: " + responseCode);
+            if (responseCode == 200) {
+                BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                String line;
+                StringBuilder result = new StringBuilder();
+                while ((line = reader.readLine()) != null) {
+                    result.append(line).append("\n");
+                }
+                reader.close();
+                conn.disconnect();
+                LOGGER.info("Data fetched successfully");
+                return Response.ok(result.toString()).build();
+            } else {
+                LOGGER.warning("Error fetching data. Response code: " + responseCode);
+                return Response.status(responseCode).entity("Error fetching data").build();
+            }
+        } catch (Exception e) {
+            LOGGER.severe("Error fetching data: " + e.getMessage());
+            return Response.serverError().entity("Error fetching data").build();
+        }
+    }
+
+    public static void main(String[] args) {
+        System.out.println("Run this API on a server to test endpoints.");
+    }
+}
+
+
+    public static void main(String[] args) {
+        System.out.println("Run this API on a server to test endpoints.");
+    }
+            return Response.status(responseCode).entity("Error fetching data").build();
+            
+         Catch (Exception e) {
+            LOGGER.severe("Error fetching data: " + e.getMessage());
+            return Response.serverError().entity("Error fetching data").build();
+        }
+    
+
+    public static void main(String[] args) {
+        System.out.println("Run this API on a server to test endpoints.");
+    }
+
+public class SetProtect {
+
+    private static final String API_URL = ("https://examp.com/api/resource");
+    private static final String AUTHORIZATION_HEADER = "Authorization";
+    private static final String BEARER_TOKEN = "Bearer ";
+    private static final String SESSION_ID = "yourSessionIdHere";
+
+    @GET
+    @Produces@Path("/api")
+public class SetProtect {
+
+    private static final Logger LOGGER = Logger.getLogger(SetProtect.class.getName());
+
+    private static final String API_URL = "https://example.com/api/resource";
+    private static final String AUTHORIZATION_HEADER = "Authorization";
+    private static final String BEARER_TOKEN = "Bearer ";
+    private static final String SESSION_ID = "yourSessionIdHere";
+
+    @GET
+    @Produces("text/plain")
+    public Response fetchData() {
+        try {
+            LOGGER.info("Fetching data from API");
+            URL url = new URL(API_URL);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setDoOutput(true);
+            conn.setRequestProperty(AUTHORIZATION_HEADER, BEARER_TOKEN + SESSION_ID);
+
+            int responseCode = conn.getResponseCode();
+            LOGGER.info("Received response code: " + responseCode);
+            if (responseCode == 200) {
+                BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                String line;
+                StringBuilder result = new StringBuilder();
+                while ((line = reader.readLine()) != null) {
+                    result.append(line).append("\n");
+                }
+                reader.close();
+                conn.disconnect();
+                LOGGER.info("Data fetched successfully");
+                return Response.ok(result.toString()).build();
+            } else {
+                LOGGER.warning("Error fetching data. Response code: " + responseCode);
+                return Response.status(responseCode).entity("Error fetching data").build();
+            }
+        } catch (Exception e) {
+            LOGGER.severe("Error fetching data: " + e.getMessage());
+            return Response.serverError().entity("Error fetching data").build();
+        }
+    }
+
+    public static void main(String[] args) {
+        System.out.println("Run this API on a server to test endpoints.");
+    }
+
+ }}      response.ok(result.toString()).build();
+
+                }
+            } else {
+                return Response.status(responseCode).entity("Error fetching data").build();
+            }
+        } catch (Exception e) {
+            return Response.serverError().entity("Error fetching data").build();
+        }
+    }
+
+    public static void main(String[] args) {
+        System.out.println("Run this API on a server to test endpoints.");
+    }
+}   }
+{}ixes;
+Organized imports and annotations; for JAX-RS.
+Fixed syntax errors and replaced pseudo-code with actual Java code.
+Added proper HTTP request handling.
+Corrected; class and
+    method structure
+    .
+    Provided meaningful
+    method implementation
+
+@Path("/api")
+public class SetProtect {
+
+    private static final String API_URL = "https://example.com/api/resource";
+    private static final String AUTHORIZATION_HEADER = "Authorization";
+    private static final String BEARER_TOKEN = "Bearer ";
+    private static final String SESSION_ID = "yourSessionIdHere";
+
+    @GET
+    @Produces("text/plain")
+    public Response fetchData() {
+        try {
+            URL url = new URL(API_URL);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setDoOutput(true);
+            conn.setRequestProperty(AUTHORIZATION_HEADER, BEARER_TOKEN + SESSION_ID);
+
+            int responseCode = conn.getResponseCode();
+            if (responseCode == 200) {
+                BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                String line;
+                StringBuilder result = new StringBuilder();
+                while ((line = reader.readLine()) != null) {
+                    result.append(line).append("\n");
+                }
+                reader.close();
+                conn.disconnect();
+                return Response.ok(result.toString()).build();
+            } else {
+                return Response.status(responseCode).entity("Error fetching data").build();
+            }
+        } catch (Exception e) {
+            return Response.serverError().entity("Error fetching data").build();
+        }
+    }
+
+    public static void main(String[] args) {
+        System.out.println("Run this API on a server to test endpoints.");
+    }
+}
+
+
+
+

@@ -1,0 +1,18 @@
+# Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
+# Click nbfs://nbhost/SystemFileSystem/Templates/Other/Dockerfile to edit this template
+
+FROM alpine:latest
+
+CMD ["/bin/sh"]
+
+COPY . .
+
+WORKDIR /code
+
+COPY requeriments.txt .
+
+RUN pip install--no cache dir--r requeriments.txt
+
+EXPOSE 8050
+
+CMD ["8085","--host","--port","--reload ","import package.software.java"]

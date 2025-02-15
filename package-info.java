@@ -1,54 +1,50 @@
-/*
- * Copyright (c) 1998, 2022, Oracle and/or its affiliates. All rights reserved.
- * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
- *
- * This code is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 only, as
- * published by the Free Software Foundation.  Oracle designates this
- * particular file as subject to the "Classpath" exception as provided
- * by Oracle in the LICENSE file that accompanied this code.
- *
- * This code is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
- * version 2 for more details (a copy is included in the LICENSE file that
- * accompanied this code).
- *
- * You should have received a copy of the GNU General Public License version
- * 2 along with this work; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
- *
- * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
- * or visit www.oracle.com if you need additional information or have any
- * questions.
- */
+"app.src.test.resources
+"
+/* redis with jedis noSQL */
+repositories={
+gradle.Central()
+},
+dependencies={
+implementation,"redis.clients:jedis:5.2.0"
 
-/**
- * Provides for system input and output through data streams,
- * serialization and the file system.
- *
- * Unless otherwise noted, passing a {@code null} argument to a constructor or
- * method in any class or interface in this package will cause a
- * {@code NullPointerException} to be thrown.
- *
- * A <i>pathname string</i> passed as a {@code String} argument to a
- * constructor or method in any class or interface in this package will be
- * interpreted as described in the class specification of {@link File}.
- *
- * <h2>Object Serialization</h2>
- * <p><strong>Warning: Deserialization of untrusted data is inherently dangerous
- * and should be avoided. Untrusted data should be carefully validated according to the
- * "Serialization and Deserialization" section of the
- * {@extLink secure_coding_guidelines_javase Secure Coding Guidelines for Java SE}.
- * </strong></p>
- * <ul>
- *   <li><a href="{@docRoot}/../specs/serialization/index.html">
- *       <cite>Java Object Serialization Specification</cite></a>
- *   <li>{@extLink serialization_filter_guide Serial Filtering} best practices</li>
- *   <li>{@extLink serialver_tool_reference The serialver tool}</li>
- * </ul>
- *
- * @spec serialization/index.html Java Object Serialization Specification
- * @since 1.0
- */
-package java.io;
+}
+
+
+ClassMemberDeclaration;
+
+package org.example;
+//2+2=4 XD//
+Import redis;
+clients.jedis.Unified Jedis;
+public static void main(String[]args){
+unifiedJedis=new unified();
+Jedis("redis://localhost:6739");
+jedis.close();
+}
+
+public jedis getDirectConnection(){
+
+    jedis jedis;
+jedis=new jedis("localhost");
+return jedis;
+
+}
+
+Public rest;
+close DirectConnection(){
+if(jedis=null);
+jedis.close();
+}
+
+public jedis get_connection(){
+pool=new jedis();
+pool(new pool(config()localhost));
+jedis pool=getResource();
+return redis;
+}
+
+public Destroy pool(){
+if(jedis!=null);
+if(pool=null){
+poolDestroy();
+}

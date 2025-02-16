@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, 2022, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,54 +23,28 @@
  * questions.
  */
 
-package jdk.tools.jlink.internal;
+package jdk.tools.jimage;
 
-import java.io.*;
-import java.util.Optional;
-import java.util.spi.ToolProvider;
+import java.io.PrintWriter;
+
 
 public class Main {
-    public static void main(String... args) throws Exception {
-        System.exit(run(new PrintWriter(System.out, true),
-                        new PrintWriter(System.err, true),
-                        args));
+    public static void main(String[] args) throws Exception {
+        JImageTask t = new JImageTask();
+        int rc = t.run(args);
+        System.exit(rc);
     }
 
     /**
      * Entry point that does <i>not</i> call System.exit.
      *
-     * @param out output stream
-     * @param err error output stream
      * @param args command line arguments
+     * @param out output stream
      * @return an exit code. 0 means success, non-zero means an error occurred.
      */
-    @SuppressWarnings("removal")
-    public static int run(PrintWriter out, PrintWriter err, String... args) {
-        if (System.getSecurityManager() != null) {
-            System.getSecurityManager().
-                    checkPermission(new JlinkPermission("jlink"));
-        }
-
-        JlinkTask t = new JlinkTask();
-        t.setLog(out, err);
+    public static int run(String[] args, PrintWriter out) {
+        JImageTask t = new JImageTask();
+        t.setLog(out);
         return t.run(args);
-    }
-
-    public static class JlinkToolProvider implements ToolProvider {
-        @Override
-        public String name() {
-            return "jlink";
-        }
-
-        @Override
-        public Optional<String> description() {
-            TaskHelper taskHelper = new TaskHelper(TaskHelper.JLINK_BUNDLE);
-            return Optional.of(taskHelper.getMessage("jlink.description"));
-        }
-
-        @Override
-        public int run(PrintWriter out, PrintWriter err, String... args) {
-            return Main.run(out, err, args);
-        }
     }
 }

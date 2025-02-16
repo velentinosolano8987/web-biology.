@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1996, 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2015, 2018, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,228 +22,107 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
+package jdk.internal.net.http.hpack;
 
-package java.io;
+import java.nio.ByteBuffer;
+import java.util.Arrays;
 
+//
+//          0   1   2   3   4   5   6   7
+//        +---+---+---+---+---+---+---+---+
+//        | H |    String Length (7+)     |
+//        +---+---------------------------+
+//        |  String Data (Length octets)  |
+//        +-------------------------------+
+//
+// StringWriter does not require a notion of endOfInput (isLast) in 'write'
+// methods due to the nature of string representation in HPACK. Namely, the
+// length of the string is put before string's contents. Therefore the length is
+// always known beforehand.
+//
+// Expected use:
+//
+//     configure write* (reset configure write*)*
+//
+final class StringWriter {
 
-import java.util.Objects;
+    private static final int NEW            = 0;
+    private static final int CONFIGURED     = 1;
+    private static final int LENGTH_WRITTEN = 2;
+    private static final int DONE           = 4;
 
-/**
- * A character stream that collects its output in a string buffer, which can
- * then be used to construct a string.
- * <p>
- * Closing a {@code StringWriter} has no effect. The methods in this class
- * can be called after the stream has been closed without generating an
- * {@code IOException}.
- *
- * @author      Mark Reinhold
- * @since       1.1
- */
+    private final IntegerWriter intWriter = new IntegerWriter();
+    private final Huffman.Writer huffmanWriter = new QuickHuffman.Writer();
+    private final ISO_8859_1.Writer plainWriter = new ISO_8859_1.Writer();
 
-public class StringWriter extends Writer {
+    private int state = NEW;
+    private boolean huffman;
 
-    private final StringBuffer buf;
-
-    /**
-     * Create a new string writer using the default initial string-buffer
-     * size.
-     */
-    public StringWriter() {
-        buf = new StringBuffer();
-        lock = buf;
+    StringWriter configure(CharSequence input, boolean huffman) {
+        return configure(input, 0, input.length(), huffman);
     }
 
-    /**
-     * Create a new string writer using the specified initial string-buffer
-     * size.
-     *
-     * @param initialSize
-     *        The number of {@code char} values that will fit into this buffer
-     *        before it is automatically expanded
-     *
-     * @throws IllegalArgumentException
-     *         If {@code initialSize} is negative
-     */
-    public StringWriter(int initialSize) {
-        if (initialSize < 0) {
-            throw new IllegalArgumentException("Negative buffer size");
+    StringWriter configure(CharSequence input,
+                           int start,
+                           int end,
+                           boolean huffman) {
+        if (start < 0 || end < 0 || end > input.length() || start > end) {
+            throw new IndexOutOfBoundsException(
+                    String.format("input.length()=%s, start=%s, end=%s",
+                            input.length(), start, end));
         }
-        buf = new StringBuffer(initialSize);
-        lock = buf;
-    }
-
-    /**
-     * Write a single character.
-     */
-    public void write(int c) {
-        buf.append((char) c);
-    }
-
-    /**
-     * Write a portion of an array of characters.
-     *
-     * @param  cbuf  Array of characters
-     * @param  off   Offset from which to start writing characters
-     * @param  len   Number of characters to write
-     *
-     * @throws  IndexOutOfBoundsException
-     *          If {@code off} is negative, or {@code len} is negative,
-     *          or {@code off + len} is negative or greater than the length
-     *          of the given array
-     */
-    public void write(char[] cbuf, int off, int len) {
-        Objects.checkFromIndexSize(off, len, cbuf.length);
-        if (len == 0) {
-            return;
+        if (!huffman) {
+            plainWriter.configure(input, start, end);
+            intWriter.configure(end - start, 7, 0b0000_0000);
+        } else {
+            huffmanWriter.from(input, start, end);
+            intWriter.configure(huffmanWriter.lengthOf(input, start, end),
+                    7, 0b1000_0000);
         }
-        buf.append(cbuf, off, len);
-    }
 
-    /**
-     * Write a string.
-     */
-    public void write(String str) {
-        buf.append(str);
-    }
-
-    /**
-     * Write a portion of a string.
-     *
-     * @param  str  String to be written
-     * @param  off  Offset from which to start writing characters
-     * @param  len  Number of characters to write
-     *
-     * @throws  IndexOutOfBoundsException
-     *          If {@code off} is negative, or {@code len} is negative,
-     *          or {@code off + len} is negative or greater than the length
-     *          of the given string
-     */
-    public void write(String str, int off, int len)  {
-        buf.append(str, off, off + len);
-    }
-
-    /**
-     * Appends the specified character sequence to this writer.
-     *
-     * <p> An invocation of this method of the form {@code out.append(csq)}
-     * when {@code csq} is not {@code null}, behaves in exactly the same way
-     * as the invocation
-     *
-     * {@snippet lang=java :
-     *     out.write(csq.toString())
-     * }
-     *
-     * <p> Depending on the specification of {@code toString} for the
-     * character sequence {@code csq}, the entire sequence may not be
-     * appended. For instance, invoking the {@code toString} method of a
-     * character buffer will return a subsequence whose content depends upon
-     * the buffer's position and limit.
-     *
-     * @param  csq
-     *         The character sequence to append.  If {@code csq} is
-     *         {@code null}, then the four characters {@code "null"} are
-     *         appended to this writer.
-     *
-     * @return  This writer
-     *
-     * @since  1.5
-     */
-    public StringWriter append(CharSequence csq) {
-        write(String.valueOf(csq));
+        this.huffman = huffman;
+        state = CONFIGURED;
         return this;
     }
 
-    /**
-     * Appends a subsequence of the specified character sequence to this writer.
-     *
-     * <p> An invocation of this method of the form
-     * {@code out.append(csq, start, end)} when {@code csq}
-     * is not {@code null}, behaves in
-     * exactly the same way as the invocation
-     *
-     * {@snippet lang=java :
-     *     out.write(csq.subSequence(start, end).toString())
-     * }
-     *
-     * @param  csq
-     *         The character sequence from which a subsequence will be
-     *         appended.  If {@code csq} is {@code null}, then characters
-     *         will be appended as if {@code csq} contained the four
-     *         characters {@code "null"}.
-     *
-     * @param  start
-     *         The index of the first character in the subsequence
-     *
-     * @param  end
-     *         The index of the character following the last character in the
-     *         subsequence
-     *
-     * @return  This writer
-     *
-     * @throws  IndexOutOfBoundsException
-     *          If {@code start} or {@code end} are negative, {@code start}
-     *          is greater than {@code end}, or {@code end} is greater than
-     *          {@code csq.length()}
-     *
-     * @since  1.5
-     */
-    public StringWriter append(CharSequence csq, int start, int end) {
-        if (csq == null) csq = "null";
-        return append(csq.subSequence(start, end));
+    boolean write(ByteBuffer output) {
+        if (state == DONE) {
+            return true;
+        }
+        if (state == NEW) {
+            throw new IllegalStateException("Configure first");
+        }
+        if (!output.hasRemaining()) {
+            return false;
+        }
+        if (state == CONFIGURED) {
+            if (intWriter.write(output)) {
+                state = LENGTH_WRITTEN;
+            } else {
+                return false;
+            }
+        }
+        if (state == LENGTH_WRITTEN) {
+            boolean written = huffman
+                    ? huffmanWriter.write(output)
+                    : plainWriter.write(output);
+            if (written) {
+                state = DONE;
+                return true;
+            } else {
+                return false;
+            }
+        }
+        throw new InternalError(Arrays.toString(new Object[]{state, huffman}));
     }
 
-    /**
-     * Appends the specified character to this writer.
-     *
-     * <p> An invocation of this method of the form {@code out.append(c)}
-     * behaves in exactly the same way as the invocation
-     *
-     * {@snippet lang=java :
-     *     out.write(c)
-     * }
-     *
-     * @param  c
-     *         The 16-bit character to append
-     *
-     * @return  This writer
-     *
-     * @since 1.5
-     */
-    public StringWriter append(char c) {
-        write(c);
-        return this;
+    void reset() {
+        intWriter.reset();
+        if (huffman) {
+            huffmanWriter.reset();
+        } else {
+            plainWriter.reset();
+        }
+        state = NEW;
     }
-
-    /**
-     * Return the buffer's current value as a string.
-     */
-    public String toString() {
-        return buf.toString();
-    }
-
-    /**
-     * Return the string buffer itself.
-     *
-     * @return StringBuffer holding the current buffer value.
-     */
-    public StringBuffer getBuffer() {
-        return buf;
-    }
-
-    /**
-     * Flush the stream.
-     *
-     * <p> The {@code flush} method of {@code StringWriter} does nothing.
-     */
-    public void flush() {
-    }
-
-    /**
-     * Closing a {@code StringWriter} has no effect. The methods in this
-     * class can be called after the stream has been closed without generating
-     * an {@code IOException}.
-     */
-    public void close() throws IOException {
-    }
-
 }

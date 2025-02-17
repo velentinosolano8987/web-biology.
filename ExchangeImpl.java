@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, 2023, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,246 +23,457 @@
  * questions.
  */
 
-package jdk.internal.net.http;
+package sun.net.httpserver;
 
-import java.io.IOException;
-import java.net.http.HttpResponse;
-import java.net.http.HttpResponse.ResponseInfo;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
+import java.io.*;
+import java.net.*;
+import javax.net.ssl.*;
+import java.util.*;
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
+import java.text.*;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.stream.Stream;
+import com.sun.net.httpserver.*;
 
-import jdk.internal.net.http.common.HttpBodySubscriberWrapper;
-import jdk.internal.net.http.common.Logger;
-import jdk.internal.net.http.common.MinimalFuture;
-import jdk.internal.net.http.common.Utils;
+class ExchangeImpl {
 
-import static java.net.http.HttpClient.Version.HTTP_1_1;
+    Headers reqHdrs, rspHdrs;
+    Request req;
+    String method;
+    boolean writefinished;
+    URI uri;
+    HttpConnection connection;
+    long reqContentLen;
+    long rspContentLen;
+    /* raw streams which access the socket directly */
+    InputStream ris;
+    OutputStream ros;
+    Thread thread;
+    /* close the underlying connection when this exchange finished */
+    boolean close;
+    boolean closed;
+    boolean http10 = false;
 
-/**
- * Splits request so that headers and body can be sent separately with optional
- * (multiple) responses in between (e.g. 100 Continue). Also request and
- * response always sent/received in different calls.
- *
- * Synchronous and asynchronous versions of each method are provided.
- *
- * Separate implementations of this class exist for HTTP/1.1 and HTTP/2
- *      Http1Exchange   (HTTP/1.1)
- *      Stream          (HTTP/2)
- *
- * These implementation classes are where work is allocated to threads.
- */
-abstract class ExchangeImpl<T> {
-
-    private static final Logger debug =
-            Utils.getDebugLogger("ExchangeImpl"::toString, Utils.DEBUG);
-
-    final Exchange<T> exchange;
-
-    ExchangeImpl(Exchange<T> e) {
-        // e == null means a http/2 pushed stream
-        this.exchange = e;
+    /* for formatting the Date: header */
+    private static final DateTimeFormatter FORMATTER;
+    static {
+        String pattern = "EEE, dd MMM yyyy HH:mm:ss zzz";
+        FORMATTER = DateTimeFormatter.ofPattern(pattern, Locale.US)
+                                     .withZone(ZoneId.of("GMT"));
     }
 
-    final Exchange<T> getExchange() {
-        return exchange;
-    }
+    private static final String HEAD = "HEAD";
 
-    HttpClientImpl client() {
-        return exchange.client();
-    }
-
-    /**
-     * Returns the {@link HttpConnection} instance to which this exchange is
-     * assigned.
+    /* streams which take care of the HTTP protocol framing
+     * and are passed up to higher layers
      */
-    abstract HttpConnection connection();
+    InputStream uis;
+    OutputStream uos;
+    LeftOverInputStream uis_orig; // uis may have be a user supplied wrapper
+    PlaceholderOutputStream uos_orig;
 
-    /**
-     * Initiates a new exchange and assigns it to a connection if one exists
-     * already. connection usually null.
-     */
-    static <U> CompletableFuture<? extends ExchangeImpl<U>>
-    get(Exchange<U> exchange, HttpConnection connection)
-    {
-        if (exchange.version() == HTTP_1_1) {
-            if (debug.on())
-                debug.log("get: HTTP/1.1: new Http1Exchange");
-            return createHttp1Exchange(exchange, connection);
-        } else {
-            Http2ClientImpl c2 = exchange.client().client2(); // #### improve
-            HttpRequestImpl request = exchange.request();
-            CompletableFuture<Http2Connection> c2f = c2.getConnectionFor(request, exchange);
-            if (debug.on())
-                debug.log("get: Trying to get HTTP/2 connection");
-            // local variable required here; see JDK-8223553
-            CompletableFuture<CompletableFuture<? extends ExchangeImpl<U>>> fxi =
-                c2f.handle((h2c, t) -> createExchangeImpl(h2c, t, exchange, connection));
-            return fxi.thenCompose(x->x);
+    boolean sentHeaders; /* true after response headers sent */
+    Map<String,Object> attributes;
+    int rcode = -1;
+    HttpPrincipal principal;
+    ServerImpl server;
+
+    ExchangeImpl (
+        String m, URI u, Request req, long len, HttpConnection connection
+    ) throws IOException {
+        this.req = req;
+        this.reqHdrs = Headers.of(req.headers());
+        this.rspHdrs = new Headers();
+        this.method = m;
+        this.uri = u;
+        this.connection = connection;
+        this.reqContentLen = len;
+        /* ros only used for headers, body written directly to stream */
+        this.ros = req.outputStream();
+        this.ris = req.inputStream();
+        server = getServerImpl();
+        server.startExchange();
+    }
+
+    public Headers getRequestHeaders () {
+        return reqHdrs;
+    }
+
+    public Headers getResponseHeaders () {
+        return rspHdrs;
+    }
+
+    public URI getRequestURI () {
+        return uri;
+    }
+
+    public String getRequestMethod (){
+        return method;
+    }
+
+    public HttpContextImpl getHttpContext (){
+        return connection.getHttpContext();
+    }
+
+    private boolean isHeadRequest() {
+        return HEAD.equals(getRequestMethod());
+    }
+
+    public void close () {
+        if (closed) {
+            return;
+        }
+        closed = true;
+
+        /* close the underlying connection if,
+         * a) the streams not set up yet, no response can be sent, or
+         * b) if the wrapper output stream is not set up, or
+         * c) if the close of the input/outpu stream fails
+         */
+        try {
+            if (uis_orig == null || uos == null) {
+                connection.close();
+                return;
+            }
+            if (!uos_orig.isWrapped()) {
+                connection.close();
+                return;
+            }
+            if (!uis_orig.isClosed()) {
+                uis_orig.close();
+            }
+            uos.close();
+        } catch (IOException e) {
+            connection.close();
         }
     }
 
-    private static <U> CompletableFuture<? extends ExchangeImpl<U>>
-    createExchangeImpl(Http2Connection c,
-                       Throwable t,
-                       Exchange<U> exchange,
-                       HttpConnection connection)
+    public InputStream getRequestBody () {
+        if (uis != null) {
+            return uis;
+        }
+        if (reqContentLen == -1L) {
+            uis_orig = new ChunkedInputStream (this, ris);
+            uis = uis_orig;
+        } else {
+            uis_orig = new FixedLengthInputStream (this, ris, reqContentLen);
+            uis = uis_orig;
+        }
+        return uis;
+    }
+
+    LeftOverInputStream getOriginalInputStream () {
+        return uis_orig;
+    }
+
+    public int getResponseCode () {
+        return rcode;
+    }
+
+    public OutputStream getResponseBody () {
+        /* TODO. Change spec to remove restriction below. Filters
+         * cannot work with this restriction
+         *
+         * if (!sentHeaders) {
+         *    throw new IllegalStateException ("headers not sent");
+         * }
+         */
+        if (uos == null) {
+            uos_orig = new PlaceholderOutputStream (null);
+            uos = uos_orig;
+        }
+        return uos;
+    }
+
+
+    /* returns the place holder stream, which is the stream
+     * returned from the 1st call to getResponseBody()
+     * The "real" ouputstream is then placed inside this
+     */
+    PlaceholderOutputStream getPlaceholderResponseBody () {
+        getResponseBody();
+        return uos_orig;
+    }
+
+    public void sendResponseHeaders (int rCode, long contentLen)
+    throws IOException
     {
-        if (debug.on())
-            debug.log("handling HTTP/2 connection creation result");
-        boolean secure = exchange.request().secure();
-        if (t != null) {
-            if (debug.on())
-                debug.log("handling HTTP/2 connection creation failed: %s",
-                                 (Object)t);
-            t = Utils.getCompletionCause(t);
-            if (t instanceof Http2Connection.ALPNException) {
-                Http2Connection.ALPNException ee = (Http2Connection.ALPNException)t;
-                AbstractAsyncSSLConnection as = ee.getConnection();
-                if (debug.on())
-                    debug.log("downgrading to HTTP/1.1 with: %s", as);
-                CompletableFuture<? extends ExchangeImpl<U>> ex =
-                        createHttp1Exchange(exchange, as);
-                return ex;
+        final Logger logger = server.getLogger();
+        if (sentHeaders) {
+            throw new IOException ("headers already sent");
+        }
+        this.rcode = rCode;
+        String statusLine = "HTTP/1.1 "+rCode+Code.msg(rCode)+"\r\n";
+        ByteArrayOutputStream tmpout = new ByteArrayOutputStream();
+        PlaceholderOutputStream o = getPlaceholderResponseBody();
+        tmpout.write (bytes(statusLine, 0), 0, statusLine.length());
+        boolean noContentToSend = false; // assume there is content
+        boolean noContentLengthHeader = false; // must not send Content-length is set
+        rspHdrs.set("Date", FORMATTER.format(Instant.now()));
+
+        /* check for response type that is not allowed to send a body */
+
+        if ((rCode>=100 && rCode <200) /* informational */
+            ||(rCode == 204)           /* no content */
+            ||(rCode == 304))          /* not modified */
+        {
+            if (contentLen != -1) {
+                String msg = "sendResponseHeaders: rCode = "+ rCode
+                    + ": forcing contentLen = -1";
+                logger.log (Level.WARNING, msg);
+            }
+            contentLen = -1;
+            noContentLengthHeader = (rCode != 304);
+        }
+
+        if (isHeadRequest() || rCode == 304) {
+            /* HEAD requests or 304 responses should not set a content length by passing it
+             * through this API, but should instead manually set the required
+             * headers.*/
+            if (contentLen >= 0) {
+                String msg =
+                    "sendResponseHeaders: being invoked with a content length for a HEAD request";
+                logger.log (Level.WARNING, msg);
+            }
+            noContentToSend = true;
+            contentLen = 0;
+            o.setWrappedStream (new FixedLengthOutputStream (this, ros, contentLen));
+        } else { /* not a HEAD request or 304 response */
+            if (contentLen == 0) {
+                if (http10) {
+                    o.setWrappedStream (new UndefLengthOutputStream (this, ros));
+                    close = true;
+                } else {
+                    rspHdrs.set ("Transfer-encoding", "chunked");
+                    o.setWrappedStream (new ChunkedOutputStream (this, ros));
+                }
             } else {
-                if (debug.on())
-                    debug.log("HTTP/2 connection creation failed "
-                                     + "with unexpected exception: %s", (Object)t);
-                return MinimalFuture.failedFuture(t);
+                if (contentLen == -1) {
+                    noContentToSend = true;
+                    contentLen = 0;
+                }
+                if (!noContentLengthHeader) {
+                    rspHdrs.set("Content-length", Long.toString(contentLen));
+                }
+                o.setWrappedStream (new FixedLengthOutputStream (this, ros, contentLen));
             }
         }
-        if (secure && c== null) {
-            if (debug.on())
-                debug.log("downgrading to HTTP/1.1 ");
-            CompletableFuture<? extends ExchangeImpl<U>> ex =
-                    createHttp1Exchange(exchange, null);
-            return ex;
+
+        // A custom handler can request that the connection be
+        // closed after the exchange by supplying Connection: close
+        // to the response header. Nothing to do if the exchange is
+        // already set up to be closed.
+        if (!close) {
+            Stream<String> conheader =
+                    Optional.ofNullable(rspHdrs.get("Connection"))
+                    .map(List::stream).orElse(Stream.empty());
+            if (conheader.anyMatch("close"::equalsIgnoreCase)) {
+                logger.log (Level.DEBUG, "Connection: close requested by handler");
+                close = true;
+            }
         }
-        if (c == null) {
-            // no existing connection. Send request with HTTP 1 and then
-            // upgrade if successful
-            if (debug.on())
-                debug.log("new Http1Exchange, try to upgrade");
-            return createHttp1Exchange(exchange, connection)
-                    .thenApply((e) -> {
-                        exchange.h2Upgrade();
-                        return e;
-                    });
+
+        write (rspHdrs, tmpout);
+        this.rspContentLen = contentLen;
+        tmpout.writeTo(ros);
+        sentHeaders = true;
+        logger.log(Level.TRACE, "Sent headers: noContentToSend=" + noContentToSend);
+        if (noContentToSend) {
+            ros.flush();
+            close();
+        }
+        server.logReply (rCode, req.requestLine(), null);
+    }
+
+    void write (Headers map, OutputStream os) throws IOException {
+        Set<Map.Entry<String,List<String>>> entries = map.entrySet();
+        for (Map.Entry<String,List<String>> entry : entries) {
+            String key = entry.getKey();
+            byte[] buf;
+            List<String> values = entry.getValue();
+            for (String val : values) {
+                int i = key.length();
+                buf = bytes (key, 2);
+                buf[i++] = ':';
+                buf[i++] = ' ';
+                os.write (buf, 0, i);
+                buf = bytes (val, 2);
+                i = val.length();
+                buf[i++] = '\r';
+                buf[i++] = '\n';
+                os.write (buf, 0, i);
+            }
+        }
+        os.write ('\r');
+        os.write ('\n');
+    }
+
+    private byte[] rspbuf = new byte [128]; // used by bytes()
+
+    /**
+     * convert string to byte[], using rspbuf
+     * Make sure that at least "extra" bytes are free at end
+     * of rspbuf. Reallocate rspbuf if not big enough.
+     * caller must check return value to see if rspbuf moved
+     */
+    private byte[] bytes (String s, int extra) {
+        int slen = s.length();
+        if (slen+extra > rspbuf.length) {
+            int diff = slen + extra - rspbuf.length;
+            rspbuf = new byte [2* (rspbuf.length + diff)];
+        }
+        char c[] = s.toCharArray();
+        for (int i=0; i<c.length; i++) {
+            rspbuf[i] = (byte)c[i];
+        }
+        return rspbuf;
+    }
+
+    public InetSocketAddress getRemoteAddress (){
+        Socket s = connection.getChannel().socket();
+        InetAddress ia = s.getInetAddress();
+        int port = s.getPort();
+        return new InetSocketAddress (ia, port);
+    }
+
+    public InetSocketAddress getLocalAddress (){
+        Socket s = connection.getChannel().socket();
+        InetAddress ia = s.getLocalAddress();
+        int port = s.getLocalPort();
+        return new InetSocketAddress (ia, port);
+    }
+
+    public String getProtocol (){
+        String reqline = req.requestLine();
+        int index = reqline.lastIndexOf (' ');
+        return reqline.substring (index+1);
+    }
+
+    public SSLSession getSSLSession () {
+        SSLEngine e = connection.getSSLEngine();
+        if (e == null) {
+            return null;
+        }
+        return e.getSession();
+    }
+
+    public Object getAttribute (String name) {
+        if (name == null) {
+            throw new NullPointerException ("null name parameter");
+        }
+        if (attributes == null) {
+            attributes = getHttpContext().getAttributes();
+        }
+        return attributes.get (name);
+    }
+
+    public void setAttribute (String name, Object value) {
+        if (name == null) {
+            throw new NullPointerException ("null name parameter");
+        }
+        if (attributes == null) {
+            attributes = getHttpContext().getAttributes();
+        }
+        if (value != null) {
+            attributes.put (name, value);
         } else {
-            if (debug.on()) debug.log("creating HTTP/2 streams");
-            Stream<U> s = c.createStream(exchange);
-            CompletableFuture<? extends ExchangeImpl<U>> ex = MinimalFuture.completedFuture(s);
-            return ex;
+            attributes.remove (name);
         }
     }
 
-    private static <T> CompletableFuture<Http1Exchange<T>>
-    createHttp1Exchange(Exchange<T> ex, HttpConnection as)
-    {
-        try {
-            return MinimalFuture.completedFuture(new Http1Exchange<>(ex, as));
-        } catch (Throwable e) {
-            return MinimalFuture.failedFuture(e);
+    public void setStreams (InputStream i, OutputStream o) {
+        assert uis != null;
+        if (i != null) {
+            uis = i;
+        }
+        if (o != null) {
+            uos = o;
         }
     }
 
-    // Called for 204 response - when no body is permitted
-    void nullBody(HttpResponse<T> resp, Throwable t) {
-        // Needed for HTTP/1.1 to close the connection or return it to the pool
-        // Needed for HTTP/2 to subscribe a dummy subscriber and close the stream
+    /**
+     * PP
+     */
+    HttpConnection getConnection () {
+        return connection;
     }
 
-    /* The following methods have separate HTTP/1.1 and HTTP/2 implementations */
-
-    abstract CompletableFuture<ExchangeImpl<T>> sendHeadersAsync();
-
-    /** Sends a request body, after request headers have been sent. */
-    abstract CompletableFuture<ExchangeImpl<T>> sendBodyAsync();
-
-    abstract CompletableFuture<T> readBodyAsync(HttpResponse.BodyHandler<T> handler,
-                                                boolean returnConnectionToPool,
-                                                Executor executor);
-
-    /**
-     * Creates and wraps an {@link HttpResponse.BodySubscriber} from a {@link
-     * HttpResponse.BodyHandler} for the given {@link ResponseInfo}.
-     * An {@code HttpBodySubscriberWrapper} wraps a response body subscriber and makes
-     * sure its completed/onError methods are called only once, and that its onSusbscribe
-     * is called before onError. This is useful when errors occur asynchronously, and
-     * most typically when the error occurs before the {@code BodySubscriber} has
-     * subscribed.
-     * @param handler  a body handler
-     * @param response a response info
-     * @return a new {@code HttpBodySubscriberWrapper} to handle the response
-     */
-    HttpBodySubscriberWrapper<T> createResponseSubscriber(
-            HttpResponse.BodyHandler<T> handler, ResponseInfo response) {
-        return new HttpBodySubscriberWrapper<>(handler.apply(response));
+    ServerImpl getServerImpl () {
+        return getHttpContext().getServerImpl();
     }
 
-    /**
-     * Ignore/consume the body.
-     */
-    abstract CompletableFuture<Void> ignoreBody();
+    public HttpPrincipal getPrincipal () {
+        return principal;
+    }
 
+    void setPrincipal (HttpPrincipal principal) {
+        this.principal = principal;
+    }
 
-    /** Gets the response headers. Completes before body is read. */
-    abstract CompletableFuture<Response> getResponseAsync(Executor executor);
+    static ExchangeImpl get (HttpExchange t) {
+        if (t instanceof HttpExchangeImpl) {
+            return ((HttpExchangeImpl)t).getExchangeImpl();
+        } else {
+            assert t instanceof HttpsExchangeImpl;
+            return ((HttpsExchangeImpl)t).getExchangeImpl();
+        }
+    }
+}
 
+/**
+ * An OutputStream which wraps another stream
+ * which is supplied either at creation time, or sometime later.
+ * If a caller/user tries to write to this stream before
+ * the wrapped stream has been provided, then an IOException will
+ * be thrown.
+ */
+class PlaceholderOutputStream extends java.io.OutputStream {
 
-    /** Cancels a request.  Not currently exposed through API. */
-    abstract void cancel();
+    OutputStream wrapped;
 
-    /**
-     * Cancels a request with a cause.  Not currently exposed through API.
-     */
-    abstract void cancel(IOException cause);
+    PlaceholderOutputStream (OutputStream os) {
+        wrapped = os;
+    }
 
-    /**
-     * Invoked whenever there is a (HTTP) protocol error when dealing with the response
-     * from the server. The implementations of {@code ExchangeImpl} are then expected to
-     * take necessary action that is expected by the corresponding specifications whenever
-     * a protocol error happens. For example, in HTTP/1.1, such protocol error would result
-     * in the connection being closed.
-     * @param cause The cause of the protocol violation
-     */
-    abstract void onProtocolError(IOException cause);
+    void setWrappedStream (OutputStream os) {
+        wrapped = os;
+    }
 
-    /**
-     * Called when the exchange is released, so that cleanup actions may be
-     * performed - such as deregistering callbacks.
-     * Typically released is called during upgrade, when an HTTP/2 stream
-     * takes over from an Http1Exchange, or when a new exchange is created
-     * during a multi exchange before the final response body was received.
-     */
-    abstract void released();
+    boolean isWrapped () {
+        return wrapped != null;
+    }
 
-    /**
-     * Called when the exchange is completed, so that cleanup actions may be
-     * performed - such as deregistering callbacks.
-     * Typically, completed is called at the end of the exchange, when the
-     * final response body has been received (or an error has caused the
-     * completion of the exchange).
-     */
-    abstract void completed();
+    private void checkWrap () throws IOException {
+        if (wrapped == null) {
+            throw new IOException ("response headers not sent yet");
+        }
+    }
 
-    /**
-     * Returns true if this exchange was canceled.
-     * @return true if this exchange was canceled.
-     */
-    abstract boolean isCanceled();
+    public void write(int b) throws IOException {
+        checkWrap();
+        wrapped.write (b);
+    }
 
-    /**
-     * Returns the cause for which this exchange was canceled, if available.
-     * @return the cause for which this exchange was canceled, if available.
-     */
-    abstract Throwable getCancelCause();
+    public void write(byte b[]) throws IOException {
+        checkWrap();
+        wrapped.write (b);
+    }
 
-    // Mark the exchange as upgraded
-    // Needed to handle cancellation during the upgrade from
-    // Http1Exchange to Stream
-    void upgraded() { }
+    public void write(byte b[], int off, int len) throws IOException {
+        checkWrap();
+        wrapped.write (b, off, len);
+    }
 
-    // Called when server returns non 100 response to
-    // an Expect-Continue
-    void expectContinueFailed(int rcode) { }
+    public void flush() throws IOException {
+        checkWrap();
+        wrapped.flush();
+    }
+
+    public void close() throws IOException {
+        checkWrap();
+        wrapped.close();
+    }
 }

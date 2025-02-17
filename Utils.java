@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2021, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,88 +22,70 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
-package jdk.tools.jlink.internal;
 
-import java.net.URI;
-import java.nio.file.FileSystem;
-import java.nio.file.FileSystems;
-import java.nio.file.Path;
-import java.nio.file.PathMatcher;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.List;
+package sun.net.httpserver;
 
-import jdk.tools.jlink.plugin.Plugin;
-
+/**
+ * Provides utility methods for checking header field names and quoted strings.
+ */
 public class Utils {
 
-    private Utils() {}
+    // ABNF primitives defined in RFC 7230
+    private static final boolean[] TCHAR = new boolean[256];
+    private static final boolean[] QDTEXT = new boolean[256];
+    private static final boolean[] QUOTED_PAIR = new boolean[256];
 
-    // jrt-fs file system
-    private static FileSystem JRT_FILE_SYSTEM;
+    static {
+        char[] allowedTokenChars =
+                ("!#$%&'*+-.^_`|~0123456789" +
+                        "abcdefghijklmnopqrstuvwxyz" +
+                        "ABCDEFGHIJKLMNOPQRSTUVWXYZ").toCharArray();
+        for (char c : allowedTokenChars) {
+            TCHAR[c] = true;
+        }
+        for (char c = 0x20; c <= 0xFF; c++) {
+            QDTEXT[c] = true;
+        }
+        QDTEXT[0x22] = false;  // (")   illegal
+        QDTEXT[0x5c] = false;  // (\)   illegal
+        QDTEXT[0x7F] = false;  // (DEL) illegal
 
-    // current module
-    private static final Module THIS_MODULE = Utils.class.getModule();
-
-    public static List<String> parseList(String arguments) {
-        return Arrays.stream(arguments.split(","))
-                     .map((p) -> p.trim())
-                     .filter((p) -> !p.isEmpty())
-                     .toList();
+        for (char c = 0x20; c <= 0xFF; c++) {
+            QUOTED_PAIR[c] = true;
+        }
+        QUOTED_PAIR[0x09] = true;  // (\t)    legal
+        QUOTED_PAIR[0x7F] = false; // (DEL) illegal
     }
 
-
-    public static List<Plugin> getSortedPlugins(List<Plugin> plugins) {
-        List<Plugin> res = new ArrayList<>();
-        res.addAll(plugins);
-        res.sort(new Comparator<Plugin>() {
-            @Override
-            public int compare(Plugin o1, Plugin o2) {
-                return o1.getName().compareTo(o2.getName());
+    /*
+     * Validates an RFC 7230 field-name.
+     */
+    public static boolean isValidName(String token) {
+        for (int i = 0; i < token.length(); i++) {
+            char c = token.charAt(i);
+            if (c > 255 || !TCHAR[c]) {
+                return false;
             }
-        });
-        return res;
-    }
-
-    public static boolean isFunctional(Plugin prov) {
-        return prov.getState().contains(Plugin.State.FUNCTIONAL);
-    }
-
-    public static boolean isAutoEnabled(Plugin prov) {
-        return prov.getState().contains(Plugin.State.AUTO_ENABLED);
-    }
-
-    public static boolean isDisabled(Plugin prov) {
-        return prov.getState().contains(Plugin.State.DISABLED);
-    }
-
-    // is this a builtin (jdk.jlink) plugin?
-    public static boolean isBuiltin(Plugin prov) {
-        return THIS_MODULE.equals(prov.getClass().getModule());
-    }
-
-    public static FileSystem jrtFileSystem() {
-        if (JRT_FILE_SYSTEM == null) {
-            JRT_FILE_SYSTEM = FileSystems.getFileSystem(URI.create("jrt:/"));
         }
-
-        return JRT_FILE_SYSTEM;
+        return !token.isEmpty();
     }
 
-    public static PathMatcher getPathMatcher(FileSystem fs, String pattern) {
-        if (!pattern.startsWith("glob:") && !pattern.startsWith("regex:")) {
-            pattern = "glob:" + pattern;
+    /*
+     * Validates an RFC 7230 quoted-string.
+     */
+    public static boolean isQuotedStringContent(String token) {
+        for (int i = 0; i < token.length(); i++) {
+            char c = token.charAt(i);
+            if (c > 255) {
+                return false;
+            } else if (c == 0x5c) {  // check if valid quoted-pair
+                if (i == token.length() - 1 || !QUOTED_PAIR[token.charAt(i++)]) {
+                    return false;
+                }
+            } else if (!QDTEXT[c]) {
+                return false; // illegal char
+            }
         }
-
-        return fs.getPathMatcher(pattern);
-    }
-
-    public static PathMatcher getJRTFSPathMatcher(String pattern) {
-        return getPathMatcher(jrtFileSystem(), pattern);
-    }
-
-    public static Path getJRTFSPath(String first, String... more) {
-        return jrtFileSystem().getPath(first, more);
+        return true;
     }
 }

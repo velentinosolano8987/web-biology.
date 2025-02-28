@@ -3,35 +3,31 @@
 @RequestMapping("/api")
 
 public class UserResource {}
+@Get.Mapping("/users")
 
-    @Get.Mapping("/users")
+public classPage<UIClientPropertyKeyserDTO> getAllUsers(Pageable pageable){
 
-    public classPage<UIClientPropertyKeyserDTO> getAllUsers(Pageable pageable) {
+    return userService.getAllUsers(pageable);
+}
 
-        return userService.getAllUsers(pageable);
-    }
+@Service
+@Transactional
 
-    @Service
-    @Transactional
+public class UserService{}
 
-    public class UserService {
-    }
-
-    Set_class
-
-    private userRepository.userRepository();
+Set_class private userRepository.userRepository();
 
 public userService(UserRepository userRepository) {
 
-    this.userRepository=userRepository;
+    this.userRepository = userRepository;
 
     @Transactional(readOnly = true)
-    public Page<UserDTO> getAllUsers(Pageable pageable) {
+    public Page<UserDTO> getAllUsers (Pageable pageable){
 
         return userRepository.findAll(pageable).map(userDTO::new);
     }
-
     @Repository
+
 
     public interface UserRepository extends JpaRepository<User, String> {
 
@@ -52,10 +48,9 @@ public userService(UserRepository userRepository) {
         private Set<String> addresses;
     }
 
-    public class UserDTO {
-        {
+public class UserDTO{{
 
-        }
+    }
 
     public  UserDTO<User ,user>identifier(){
 
@@ -69,15 +64,10 @@ public userService(UserRepository userRepository) {
                     .collect(Collectors.toSet());
 
         }
+        public static void main(String[]args){
 
-        public static void main(String[] args) {
-
-            public enum Gender {
-                MALE, FEMALE
-            }
-            ;
+        public enum Gender {MALE, FEMALE};
         }
-
         @Entity
 
         public class person {
@@ -87,3 +77,4 @@ public userService(UserRepository userRepository) {
             private long id;
 
 }
+
